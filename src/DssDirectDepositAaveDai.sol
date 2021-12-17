@@ -60,17 +60,17 @@ interface LendingPoolLike {
     function withdraw(address asset, uint256 amount, address to) external;
     function getReserveNormalizedIncome(address asset) external view returns (uint256);
     function getReserveData(address asset) external view returns (
-        uint256,    // Configuration
-        uint128,    // the liquidity index. Expressed in ray
-        uint128,    // variable borrow index. Expressed in ray
-        uint128,    // the current supply rate. Expressed in ray
-        uint128,    // the current variable borrow rate. Expressed in ray
-        uint128,    // the current stable borrow rate. Expressed in ray
+        uint256,  // Configuration
+        uint128,  // The liquidity index. Expressed in ray.
+        uint128,  // Variable borrow index. Expressed in ray.
+        uint128,  // The current supply rate. Expressed in ray.
+        uint128,  // The current variable borrow rate. Expressed in ray.
+        uint128,  // The current stable borrow rate. Expressed in ray.
         uint40,
-        address,    // address of the adai interest bearing token
-        address,    // address of the stable debt token
-        address,    // address of the variable debt token
-        address,    // address of the interest rate strategy
+        address,  // Address of the adai interest bearing token.
+        address,  // Address of the stable debt token.
+        address,  // Address of the variable debt token.
+        address,  // Address of the interest rate strategy.
         uint8
     );
 }
@@ -95,47 +95,64 @@ interface EndLike {
 
 contract DssDirectDepositAaveDai {
 
-    // --- Auth ---
+    /************/
+    /*** Auth ***/
+    /************/
+
     mapping (address => uint) public wards;
+
     function rely(address usr) external auth {
         wards[usr] = 1;
 
         emit Rely(usr);
     }
+
     function deny(address usr) external auth {
         wards[usr] = 0;
 
         emit Deny(usr);
     }
+
     modifier auth {
         require(wards[msg.sender] == 1, "DssDirectDepositAaveDai/not-authorized");
         _;
     }
 
-    ChainlogLike public immutable chainlog;
-    VatLike public immutable vat;
-    bytes32 public immutable ilk;
-    LendingPoolLike public immutable pool;
-    InterestRateStrategyLike public immutable interestStrategy;
-    RewardsClaimerLike public immutable rewardsClaimer;
-    TokenLike public immutable adai;
-    TokenLike public immutable stableDebt;
-    TokenLike public immutable variableDebt;
-    TokenLike public immutable dai;
-    DaiJoinLike public immutable daiJoin;
-    TokenLike public immutable gem;
-    uint256 public immutable dec;
+    /***************************/
+    /*** Immutable Variables ***/
+    /***************************/
 
-    uint256 public tau;             // Time until you can write off the debt [sec]
-    uint256 public bar;             // Target Interest Rate [ray]
+    ChainlogLike             public immutable chainlog;
+    VatLike                  public immutable vat;
+    bytes32                  public immutable ilk;
+    LendingPoolLike          public immutable pool;
+    InterestRateStrategyLike public immutable interestStrategy;
+    RewardsClaimerLike       public immutable rewardsClaimer;
+    TokenLike                public immutable adai;
+    TokenLike                public immutable stableDebt;
+    TokenLike                public immutable variableDebt;
+    TokenLike                public immutable dai;
+    DaiJoinLike              public immutable daiJoin;
+    TokenLike                public immutable gem;
+    uint256                  public immutable dec;
+
+    /***********************/
+    /*** State Variables ***/
+    /***********************/
+
+    uint256 public tau;       // Time until you can write off the debt [sec]
+    uint256 public bar;       // Target Interest Rate [ray]
     uint256 public live = 1;
     uint256 public culled;
-    uint256 public tic;             // Timestamp when the system is caged
-    address public king;            // Who gets the rewards
+    uint256 public tic;       // Timestamp when the system is caged
+    address public king;      // Who gets the rewards
 
     enum Mode{ NORMAL, MODULE_CULLED, MCD_CAGED }
 
-    // --- Events ---
+    /**************/
+    /*** Events ***/
+    /**************/
+
     event Rely(address indexed usr);
     event Deny(address indexed usr);
     event File(bytes32 indexed what, address data);
@@ -147,29 +164,33 @@ contract DssDirectDepositAaveDai {
     event Cull();
     event Uncull();
 
+    /************/
+    /*** Init ***/
+    /************/
+
     constructor(address chainlog_, bytes32 ilk_, address pool_, address _rewardsClaimer) public {
-        address vat_ = ChainlogLike(chainlog_).getAddress("MCD_VAT");
+        address vat_     = ChainlogLike(chainlog_).getAddress("MCD_VAT");
         address daiJoin_ = ChainlogLike(chainlog_).getAddress("MCD_JOIN_DAI");
-        TokenLike dai_ = dai = TokenLike(DaiJoinLike(daiJoin_).dai());
+        TokenLike dai_   = dai = TokenLike(DaiJoinLike(daiJoin_).dai());
 
         // Fetch the reserve data from Aave
         (,,,,,,, address adai_, address stableDebt_, address variableDebt_, address interestStrategy_,) = LendingPoolLike(pool_).getReserveData(address(dai_));
-        require(adai_ != address(0), "DssDirectDepositAaveDai/invalid-adai");
-        require(stableDebt_ != address(0), "DssDirectDepositAaveDai/invalid-stableDebt");
-        require(variableDebt_ != address(0), "DssDirectDepositAaveDai/invalid-variableDebt");
+        require(adai_             != address(0), "DssDirectDepositAaveDai/invalid-adai");
+        require(stableDebt_       != address(0), "DssDirectDepositAaveDai/invalid-stableDebt");
+        require(variableDebt_     != address(0), "DssDirectDepositAaveDai/invalid-variableDebt");
         require(interestStrategy_ != address(0), "DssDirectDepositAaveDai/invalid-interestStrategy");
 
-        chainlog = ChainlogLike(chainlog_);
-        vat = VatLike(vat_);
-        ilk = ilk_;
-        pool = LendingPoolLike(pool_);
-        gem = adai = TokenLike(adai_);
-        dec = TokenLike(adai_).decimals();
-        stableDebt = TokenLike(stableDebt_);
-        variableDebt = TokenLike(variableDebt_);
-        daiJoin = DaiJoinLike(daiJoin_);
+        chainlog         = ChainlogLike(chainlog_);
+        vat              = VatLike(vat_);
+        ilk              = ilk_;
+        pool             = LendingPoolLike(pool_);
+        gem              = adai = TokenLike(adai_);
+        dec              = TokenLike(adai_).decimals();
+        stableDebt       = TokenLike(stableDebt_);
+        variableDebt     = TokenLike(variableDebt_);
+        daiJoin          = DaiJoinLike(daiJoin_);
         interestStrategy = InterestRateStrategyLike(interestStrategy_);
-        rewardsClaimer = RewardsClaimerLike(_rewardsClaimer);
+        rewardsClaimer   = RewardsClaimerLike(_rewardsClaimer);
 
         wards[msg.sender] = 1;
         emit Rely(msg.sender);
@@ -180,7 +201,12 @@ contract DssDirectDepositAaveDai {
         dai_.approve(daiJoin_, type(uint256).max);
     }
 
-    // --- Math ---
+    /**********************/
+    /*** Math Functions ***/
+    /**********************/
+
+    uint256 constant RAY  = 10 ** 27;
+
     function _add(uint256 x, uint256 y) internal pure returns (uint256 z) {
         require((z = x + y) >= x, "DssDirectDepositAaveDai/overflow");
     }
@@ -190,7 +216,6 @@ contract DssDirectDepositAaveDai {
     function _mul(uint256 x, uint256 y) internal pure returns (uint256 z) {
         require(y == 0 || (z = x * y) / y == x, "DssDirectDepositAaveDai/overflow");
     }
-    uint256 constant RAY  = 10 ** 27;
     function _rmul(uint256 x, uint256 y) internal pure returns (uint256 z) {
         z = _mul(x, y) / RAY;
     }
@@ -201,7 +226,10 @@ contract DssDirectDepositAaveDai {
         z = x <= y ? x : y;
     }
 
-    // --- Administration ---
+    /********************************/
+    /*** Administrative Functions ***/
+    /********************************/
+
     function file(bytes32 what, uint256 data) external auth {
         if (what == "bar") {
             require(data <= interestStrategy.getMaxVariableBorrowRate(), "DssDirectDepositAaveDai/above-max-interest");
@@ -244,7 +272,10 @@ contract DssDirectDepositAaveDai {
         return _rdiv(_add(stableDebt.totalSupply(), variableDebt.totalSupply()), targetUtil);
     }
 
-    // --- Deposit controls ---
+    /*************************************/
+    /*** Position Management Functions ***/
+    /*************************************/
+
     function _wind(uint256 amount) internal {
         // IMPORTANT: this function assumes Vat rate of this ilk will always be == 1 * RAY (no fees).
         // That's why this module converts normalized debt (art) to Vat DAI generated with a simple RAY multiplication or division
@@ -408,10 +439,13 @@ contract DssDirectDepositAaveDai {
         }
     }
 
-    // --- Collect Interest ---
+    /****************************/
+    /*** Collection Functions ***/
+    /****************************/
+
     function reap() external {
         require(vat.live() == 1, "DssDirectDepositAaveDai/no-reap-during-shutdown");
-        require(live == 1, "DssDirectDepositAaveDai/no-reap-during-cage");
+        require(live == 1,       "DssDirectDepositAaveDai/no-reap-during-cage");
         uint256 adaiBalance = adai.balanceOf(address(this));
         (, uint256 daiDebt) = vat.urns(ilk, address(this));
         if (adaiBalance > daiDebt) {
@@ -425,12 +459,15 @@ contract DssDirectDepositAaveDai {
         }
     }
 
-    // --- Collect any rewards ---
     function collect(address[] memory assets, uint256 amount) external returns (uint256) {
         require(king != address(0), "DssDirectDepositAaveDai/king-not-set");
 
         return rewardsClaimer.claimRewards(assets, amount, king);
     }
+
+    /***************************/
+    /*** Emergency Functions ***/
+    /***************************/
 
     // --- Allow DAI holders to exit during global settlement ---
     function exit(address usr, uint256 wad) external {
@@ -458,9 +495,10 @@ contract DssDirectDepositAaveDai {
     // --- Write-off ---
     function cull() external {
         require(vat.live() == 1, "DssDirectDepositAaveDai/no-cull-during-shutdown");
-        require(live == 0, "DssDirectDepositAaveDai/live");
+        require(live == 0,       "DssDirectDepositAaveDai/live");
+        require(culled == 0,     "DssDirectDepositAaveDai/already-culled");
+
         require(_add(tic, tau) <= block.timestamp || wards[msg.sender] == 1, "DssDirectDepositAaveDai/unauthorized-cull");
-        require(culled == 0, "DssDirectDepositAaveDai/already-culled");
 
         (uint256 ink, uint256 art) = vat.urns(ilk, address(this));
         require(ink <= 2 ** 255, "DssDirectDepositAaveDai/overflow");
@@ -475,7 +513,7 @@ contract DssDirectDepositAaveDai {
     // This function is required to have the collateral back in the vault so it can be taken by End module
     // and eventually be shared to DAI holders (as any other collateral) or maybe even unwinded
     function uncull() external {
-        require(culled == 1, "DssDirectDepositAaveDai/not-prev-culled");
+        require(culled == 1,     "DssDirectDepositAaveDai/not-prev-culled");
         require(vat.live() == 0, "DssDirectDepositAaveDai/no-uncull-normal-operation");
 
         uint256 wad = vat.gem(ilk, address(this));
