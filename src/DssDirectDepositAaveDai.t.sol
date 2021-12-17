@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-pragma solidity 0.6.12;
+pragma solidity 0.8.7;
 
 import "ds-test/test.sol";
 import "dss-interfaces/Interfaces.sol";
@@ -152,8 +152,8 @@ contract DssDirectDepositAaveDaiTest is DSTest {
         // Give us a bunch of WETH and deposit into Aave
         uint256 amt = 1_000_000 * WAD;
         _giveTokens(weth, amt);
-        weth.approve(address(pool), uint256(-1));
-        dai.approve(address(pool), uint256(-1));
+        weth.approve(address(pool), type(uint256).max);
+        dai.approve(address(pool), type(uint256).max);
         pool.deposit(address(weth), amt, address(this), 0);
     }
 
@@ -510,7 +510,7 @@ contract DssDirectDepositAaveDaiTest is DSTest {
         uint256 vowDai = vat.dai(vow);
         deposit.reap();
 
-        log_named_decimal_uint("dai", vat.dai(vow) - vowDai, 18);
+        emit log_named_decimal_uint("dai", vat.dai(vow) - vowDai, 18);
 
         assertTrue(vat.dai(vow) - vowDai > 0);
     }
@@ -898,7 +898,7 @@ contract DssDirectDepositAaveDaiTest is DSTest {
         tokens[0] = address(adai);
         uint256 amountToClaim = rewardsClaimer.getRewardsBalance(tokens, address(deposit));
         if (amountToClaim == 0) return;     // Rewards are turned off - this is still an acceptable state
-        uint256 amountClaimed = deposit.collect(tokens, uint256(-1));
+        uint256 amountClaimed = deposit.collect(tokens, type(uint256).max);
         assertEq(amountClaimed, amountToClaim);
         assertEq(stkAave.balanceOf(address(pauseProxy)), amountClaimed);
         assertEq(rewardsClaimer.getRewardsBalance(tokens, address(deposit)), 0);
@@ -908,7 +908,7 @@ contract DssDirectDepositAaveDaiTest is DSTest {
         // Collect some more rewards
         uint256 amountToClaim2 = rewardsClaimer.getRewardsBalance(tokens, address(deposit));
         assertGt(amountToClaim2, 0);
-        uint256 amountClaimed2 = deposit.collect(tokens, uint256(-1));
+        uint256 amountClaimed2 = deposit.collect(tokens, type(uint256).max);
         assertEq(amountClaimed2, amountToClaim2);
         assertEq(stkAave.balanceOf(address(pauseProxy)), amountClaimed + amountClaimed2);
         assertEq(rewardsClaimer.getRewardsBalance(tokens, address(deposit)), 0);
@@ -924,7 +924,7 @@ contract DssDirectDepositAaveDaiTest is DSTest {
         tokens[0] = address(adai);
         uint256 amountToClaim = rewardsClaimer.getRewardsBalance(tokens, address(deposit));
         assertTrue(amountToClaim > 0);
-        deposit.collect(tokens, uint256(-1));
+        deposit.collect(tokens, type(uint256).max);
     }
     
     function test_cage_exit() public {
@@ -1123,7 +1123,7 @@ contract DssDirectDepositAaveDaiTest is DSTest {
 
         // Should be outside of both tolerance, but debt is empty so should still return false
         (uint256 daiDebt,) = vat.urns(ilk, address(deposit));
-        log_named_uint("daiDebt", daiDebt);
+        emit log_named_uint("daiDebt", daiDebt);
         assertTrue(!helper.shouldExec(address(deposit), 1 * RAY / 100), "6: 1% dev.");
         assertTrue(!helper.shouldExec(address(deposit), 40 * RAY / 100), "6: 40% dev.");
 
