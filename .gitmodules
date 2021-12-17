@@ -7,3 +7,6 @@
 [submodule "lib/ds-value"]
 	path = lib/ds-value
 	url = https://github.com/dapphub/ds-value
+[submodule "cache/d3m-cache"]
+	path = cache/d3m-cache
+	url = https://github.com/maple-labs/d3m-cache
