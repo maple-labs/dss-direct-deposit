@@ -21,6 +21,7 @@ interface ERC20Like {
     function balanceOf(address) external view returns (uint256);
     function approve(address, uint256) external returns (bool);
     function transfer(address, uint256) external returns (bool);
+    function totalSupply() external view returns (uint256);
 }
 
 interface Hevm {
@@ -41,10 +42,13 @@ interface PoolFactoryLike {
 }
 
 interface PoolLike {
+    function balanceOf(address) external view returns (uint256);
     function getInitialStakeRequirements() external view returns (uint256, uint256, bool, uint256, uint256);
     function getPoolSharesRequired(address, address, address, address, uint256) external view returns(uint256, uint256);
     function finalize() external;
+    function liquidityLocker() external view returns (address);
     function stakeLocker() external returns (address);
+    function setAllowList(address, bool) external;
 }
 
 interface StakeLockerLike {

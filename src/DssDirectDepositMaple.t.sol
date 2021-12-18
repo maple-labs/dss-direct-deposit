@@ -50,12 +50,13 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         hevm.store(address(end),  keccak256(abi.encode(address(this), 0)), bytes32(uint256(1)));
         hevm.store(address(spot), keccak256(abi.encode(address(this), 0)), bytes32(uint256(1)));
 
+        // Deploy Maple D3M module
         deposit = new DssDirectDepositMaple(address(chainlog), ilk, address(pool));
         deposit.file("tau", 7 days);
         directDepositMom = new DirectDepositMom();
         deposit.rely(address(directDepositMom));
 
-        // Init new collateral
+        // Init as new collateral
         pip = new DSValue();
         pip.poke(bytes32(WAD));
         spot.file(ilk, "pip", address(pip));
@@ -66,6 +67,9 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         vat.init(ilk);
         vat.file(ilk, "line", 5_000_000 * RAD);
         vat.file("Line", vat.Line() + 5_000_000 * RAD);
+
+        // Add Maker D3M as sole lender in new Maple pool
+        poolDelegate.setAllowList(address(pool), address(deposit), true);
     }
 
     function _mintTokens(address token, address account, uint256 amount) internal {
@@ -139,8 +143,18 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         poolDelegate.finalize(address(pool));
     }
 
-    function test_placeholder() external { 
-        assertTrue(false); 
+    function test_basic_deposit() external { 
+        uint256 daiTotalSupply = dai.totalSupply();
+
+        assertEq(dai.balanceOf(address(pool.liquidityLocker())), 0);
+        assertEq(pool.balanceOf(address(deposit)),               0);
+
+        deposit.exec();
+
+        assertEq(dai.totalSupply(), daiTotalSupply + 5_000_000 * WAD);
+
+        assertEq(dai.balanceOf(address(pool.liquidityLocker())), 5_000_000 * WAD);
+        assertEq(pool.balanceOf(address(deposit)),               5_000_000 * WAD);
     }
 }
 

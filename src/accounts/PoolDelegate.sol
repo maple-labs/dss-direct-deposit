@@ -43,5 +43,9 @@ contract PoolDelegate {
     function finalize(address pool) external {
         PoolLike(pool).finalize();
     }
+
+    function setAllowList(address pool, address account, bool status) external {
+        PoolLike(pool).setAllowList(account, status);
+    }
     
 }
