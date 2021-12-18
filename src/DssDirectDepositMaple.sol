@@ -157,7 +157,7 @@ contract DssDirectDepositMaple {
     }
 
     modifier auth {
-        require(wards[msg.sender] == 1, "DssDirectDepositAaveDai/not-authorized");
+        require(wards[msg.sender] == 1, "DssDirectDepositMaple/not-authorized");
         _;
     }
 
@@ -167,19 +167,19 @@ contract DssDirectDepositMaple {
 
     function file(bytes32 what, uint256 data) external auth {
         if (what == "tau" ) {
-            require(live == 1, "DssDirectDepositAaveDai/not-live");
+            require(live == 1, "DssDirectDepositMaple/not-live");
 
             tau = data;
-        } else revert("DssDirectDepositAaveDai/file-unrecognized-param");
+        } else revert("DssDirectDepositMaple/file-unrecognized-param");
 
         emit File(what, data);
     }
 
     function file(bytes32 what, address data) external auth {
-        require(vat.live() == 1, "DssDirectDepositAaveDai/no-file-during-shutdown");
+        require(vat.live() == 1, "DssDirectDepositMaple/no-file-during-shutdown");
 
         if (what == "king") king = data;
-        else revert("DssDirectDepositAaveDai/file-unrecognized-param");
+        else revert("DssDirectDepositMaple/file-unrecognized-param");
         emit File(what, data);
     }
 
@@ -206,7 +206,7 @@ contract DssDirectDepositMaple {
             return;
         }
 
-        require(int256(amount) >= 0, "DssDirectDepositAaveDai/overflow");
+        require(int256(amount) >= 0, "DssDirectDepositMaple/overflow");
 
         vat.slip(ilk, address(this), int256(amount));
         vat.frob(ilk, address(this), address(this), address(this), int256(amount), int256(amount));
@@ -217,7 +217,7 @@ contract DssDirectDepositMaple {
         pool.deposit(amount);
 
         // No precision conversion necessary since both DAI and MPT are 18 decimals
-        require(pool.balanceOf(address(this)) - prevBalance == amount, "DssDirectDepositAaveDai/no-receive-mpt");
+        require(pool.balanceOf(address(this)) - prevBalance == amount, "DssDirectDepositMaple/no-receive-mpt");
 
         emit Wind(amount);
     }
@@ -278,7 +278,7 @@ contract DssDirectDepositMaple {
     //         return;
     //     }
 
-    //     require(amount <= 2 ** 255, "DssDirectDepositAaveDai/overflow");
+    //     require(amount <= 2 ** 255, "DssDirectDepositMaple/overflow");
 
     //     // To save gas you can bring the fees back with the unwind
     //     uint256 total = _add(amount, fees);
@@ -311,8 +311,8 @@ contract DssDirectDepositMaple {
 
         if (vat.live() == 0) {
             // // MCD caged
-            // require(EndLike(chainlog.getAddress("MCD_END")).debt() == 0, "DssDirectDepositAaveDai/end-debt-already-set");
-            // require(culled == 0, "DssDirectDepositAaveDai/module-has-to-be-unculled-first");
+            // require(EndLike(chainlog.getAddress("MCD_END")).debt() == 0, "DssDirectDepositMaple/end-debt-already-set");
+            // require(culled == 0, "DssDirectDepositMaple/module-has-to-be-unculled-first");
             // _unwind(
             //     type(uint256).max,
             //     availableLiquidity,
@@ -345,13 +345,13 @@ contract DssDirectDepositMaple {
         }
     }
 
-    /****************************/
-    /*** Collection Functions ***/
-    /****************************/
+    /********************************/
+    /*** Interest Claim Functions ***/
+    /********************************/
 
     function reap() external {
-        require(vat.live() == 1, "DssDirectDepositAaveDai/no-reap-during-shutdown");
-        require(live == 1,       "DssDirectDepositAaveDai/no-reap-during-cage");
+        require(vat.live() == 1, "DssDirectDepositMaple/no-reap-during-shutdown");
+        require(live == 1,       "DssDirectDepositMaple/no-reap-during-cage");
 
         uint256 preBalance = dai.balanceOf(address(this));
 
@@ -359,91 +359,77 @@ contract DssDirectDepositMaple {
         daiJoin.join(address(chainlog.getAddress("MCD_VOW")), dai.balanceOf(address(this)) - preBalance);
     }
 
-    // function collect(address[] memory assets, uint256 amount) external returns (uint256) {
-    //     require(king != address(0), "DssDirectDepositAaveDai/king-not-set");
+    /***************************/
+    /*** Emergency Functions ***/
+    /***************************/
 
-    //     return rewardsClaimer.claimRewards(assets, amount, king);
-    // }
+    // --- Allow DAI holders to exit during global settlement ---
+    function exit(address usr, uint256 wad) external {
+        require(wad <= 2 ** 255, "DssDirectDepositMaple/overflow");
+        vat.slip(ilk, msg.sender, -int256(wad));
+        require(pool.transfer(usr, wad), "DssDirectDepositMaple/failed-transfer");
+    }
 
-    // /***************************/
-    // /*** Emergency Functions ***/
-    // /***************************/
+    // --- Shutdown ---
+    function cage() external auth {
+        require(vat.live() == 1, "DssDirectDepositMaple/no-cage-during-shutdown");
+        live = 0;
+        tic = block.timestamp;
+        emit Cage();
+    }
 
-    // // --- Allow DAI holders to exit during global settlement ---
-    // function exit(address usr, uint256 wad) external {
-    //     require(wad <= 2 ** 255, "DssDirectDepositAaveDai/overflow");
-    //     vat.slip(ilk, msg.sender, -int256(wad));
-    //     require(adai.transfer(usr, wad), "DssDirectDepositAaveDai/failed-transfer");
-    // }
+    // --- Write-off ---
+    function cull() external {
+        require(vat.live() == 1, "DssDirectDepositMaple/no-cull-during-shutdown");
+        require(live == 0,       "DssDirectDepositMaple/live");
+        require(culled == 0,     "DssDirectDepositMaple/already-culled");
 
-    // // --- Shutdown ---
-    // function cage() external {
-    //     require(vat.live() == 1, "DssDirectDepositAaveDai/no-cage-during-shutdown");
-    //     // Can shut this down if we are authed
-    //     // or if the interest rate strategy changes
-    //     (,,,,,,,,,, address strategy,) = pool.getReserveData(address(dai));
-    //     require(
-    //         wards[msg.sender] == 1 ||
-    //         strategy != address(interestStrategy)
-    //     , "DssDirectDepositAaveDai/not-authorized");
+        require(tic + tau <= block.timestamp || wards[msg.sender] == 1, "DssDirectDepositMaple/unauthorized-cull");
 
-    //     live = 0;
-    //     tic = block.timestamp;
-    //     emit Cage();
-    // }
+        (uint256 ink, uint256 art) = vat.urns(ilk, address(this));
+        require(ink <= 2 ** 255, "DssDirectDepositMaple/overflow");
+        require(art <= 2 ** 255, "DssDirectDepositMaple/overflow");
+        vat.grab(ilk, address(this), address(this), chainlog.getAddress("MCD_VOW"), -int256(ink), -int256(art));
 
-    // // --- Write-off ---
-    // function cull() external {
-    //     require(vat.live() == 1, "DssDirectDepositAaveDai/no-cull-during-shutdown");
-    //     require(live == 0,       "DssDirectDepositAaveDai/live");
-    //     require(culled == 0,     "DssDirectDepositAaveDai/already-culled");
+        culled = 1;
+        emit Cull();
+    }
 
-    //     require(_add(tic, tau) <= block.timestamp || wards[msg.sender] == 1, "DssDirectDepositAaveDai/unauthorized-cull");
+    // --- Rollback Write-off (only if General Shutdown happened) ---
+    // This function is required to have the collateral back in the vault so it can be taken by End module
+    // and eventually be shared to DAI holders (as any other collateral) or maybe even unwinded
+    function uncull() external {
+        require(culled == 1,     "DssDirectDepositMaple/not-prev-culled");
+        require(vat.live() == 0, "DssDirectDepositMaple/no-uncull-normal-operation");
 
-    //     (uint256 ink, uint256 art) = vat.urns(ilk, address(this));
-    //     require(ink <= 2 ** 255, "DssDirectDepositAaveDai/overflow");
-    //     require(art <= 2 ** 255, "DssDirectDepositAaveDai/overflow");
-    //     vat.grab(ilk, address(this), address(this), chainlog.getAddress("MCD_VOW"), -int256(ink), -int256(art));
+        uint256 wad = vat.gem(ilk, address(this));
+        require(wad < 2 ** 255, "DssDirectDepositMaple/overflow");
+        address vow = chainlog.getAddress("MCD_VOW");
+        vat.suck(vow, vow, wad * RAY); // This needs to be done to make sure we can deduct sin[vow] and vice in the next call
+        vat.grab(ilk, address(this), address(this), vow, int256(wad), int256(wad));
 
-    //     culled = 1;
-    //     emit Cull();
-    // }
+        culled = 0;
+        emit Uncull();
+    }
 
-    // // --- Rollback Write-off (only if General Shutdown happened) ---
-    // // This function is required to have the collateral back in the vault so it can be taken by End module
-    // // and eventually be shared to DAI holders (as any other collateral) or maybe even unwinded
-    // function uncull() external {
-    //     require(culled == 1,     "DssDirectDepositAaveDai/not-prev-culled");
-    //     require(vat.live() == 0, "DssDirectDepositAaveDai/no-uncull-normal-operation");
+    // --- Emergency Quit Everything ---
+    function quit(address who) external auth {
+        require(vat.live() == 1, "DssDirectDepositMaple/no-quit-during-shutdown");
 
-    //     uint256 wad = vat.gem(ilk, address(this));
-    //     require(wad < 2 ** 255, "DssDirectDepositAaveDai/overflow");
-    //     address vow = chainlog.getAddress("MCD_VOW");
-    //     vat.suck(vow, vow, _mul(wad, RAY)); // This needs to be done to make sure we can deduct sin[vow] and vice in the next call
-    //     vat.grab(ilk, address(this), address(this), vow, int256(wad), int256(wad));
+        // Send all adai in the contract to who
+        require(pool.transfer(who, pool.balanceOf(address(this))), "DssDirectDepositMaple/failed-transfer");
 
-    //     culled = 0;
-    //     emit Uncull();
-    // }
-
-    // // --- Emergency Quit Everything ---
-    // function quit(address who) external auth {
-    //     require(vat.live() == 1, "DssDirectDepositAaveDai/no-quit-during-shutdown");
-
-    //     // Send all adai in the contract to who
-    //     require(adai.transfer(who, adai.balanceOf(address(this))), "DssDirectDepositAaveDai/failed-transfer");
-
-    //     if (culled == 1) {
-    //         // Culled - just zero out the gems
-    //         uint256 wad = vat.gem(ilk, address(this));
-    //         require(wad <= 2 ** 255, "DssDirectDepositAaveDai/overflow");
-    //         vat.slip(ilk, address(this), -int256(wad));
-    //     } else {
-    //         // Regular operation - transfer the debt position (requires who to accept the transfer)
-    //         (uint256 ink, uint256 art) = vat.urns(ilk, address(this));
-    //         require(ink < 2 ** 255, "DssDirectDepositAaveDai/overflow");
-    //         require(art < 2 ** 255, "DssDirectDepositAaveDai/overflow");
-    //         vat.fork(ilk, address(this), who, int256(ink), int256(art));
-    //     }
-    // }
+        if (culled == 1) {
+            // Culled - just zero out the gems
+            uint256 wad = vat.gem(ilk, address(this));
+            require(wad <= 2 ** 255, "DssDirectDepositMaple/overflow");
+            vat.slip(ilk, address(this), -int256(wad));
+        } else {
+            // Regular operation - transfer the debt position (requires who to accept the transfer)
+            (uint256 ink, uint256 art) = vat.urns(ilk, address(this));
+            require(ink < 2 ** 255, "DssDirectDepositMaple/overflow");
+            require(art < 2 ** 255, "DssDirectDepositMaple/overflow");
+            vat.fork(ilk, address(this), who, int256(ink), int256(art));
+        }
+    }
 }
