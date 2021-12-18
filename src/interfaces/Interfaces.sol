@@ -30,8 +30,20 @@ interface Hevm {
     function load(address,bytes32) external view returns (bytes32);
 }
 
+interface LoanFactoryLike {
+    function createLoan(address, address, address, address, uint256[5] memory, address[3] memory) external returns (address);
+}
+
+interface LoanLike {
+    function collateralRequiredForDrawdown(uint256) external view returns (uint256);
+    function drawdown(uint256) external;
+    function getNextPayment() external returns (uint256, uint256, uint256);
+    function makePayment() external;
+}
+
 interface MapleGlobalsLike {
     function setLiquidityAsset(address, bool) external;
+    function setCollateralAsset(address, bool) external;
     function setPoolDelegateAllowlist(address, bool) external;
     function setPriceOracle(address, address) external;
     function setValidBalancerPool(address, bool) external;
@@ -43,12 +55,15 @@ interface PoolFactoryLike {
 
 interface PoolLike {
     function balanceOf(address) external view returns (uint256);
+    function claim(address, address) external returns (uint256[7] memory);
     function getInitialStakeRequirements() external view returns (uint256, uint256, bool, uint256, uint256);
     function getPoolSharesRequired(address, address, address, address, uint256) external view returns(uint256, uint256);
     function finalize() external;
+    function fundLoan(address, address, uint256) external;
     function liquidityLocker() external view returns (address);
     function stakeLocker() external returns (address);
     function setAllowList(address, bool) external;
+    function withdrawableFundsOf(address) external view returns (uint256);
 }
 
 interface StakeLockerLike {

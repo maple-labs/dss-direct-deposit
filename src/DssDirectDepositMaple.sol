@@ -65,6 +65,7 @@ interface MaplePoolLike is TokenLike {
     function liquidityCap() external view returns (uint256);
     function liquidityLocker() external view returns (address);
     function principalOut() external view returns (uint256);
+    function withdrawFunds() external;
 }
 
 contract DssDirectDepositMaple {
@@ -344,25 +345,19 @@ contract DssDirectDepositMaple {
         }
     }
 
-    // /****************************/
-    // /*** Collection Functions ***/
-    // /****************************/
+    /****************************/
+    /*** Collection Functions ***/
+    /****************************/
 
-    // function reap() external {
-    //     require(vat.live() == 1, "DssDirectDepositAaveDai/no-reap-during-shutdown");
-    //     require(live == 1,       "DssDirectDepositAaveDai/no-reap-during-cage");
-    //     uint256 adaiBalance = adai.balanceOf(address(this));
-    //     (, uint256 daiDebt) = vat.urns(ilk, address(this));
-    //     if (adaiBalance > daiDebt) {
-    //         uint256 fees = adaiBalance - daiDebt;
-    //         uint256 availableLiquidity = dai.balanceOf(address(adai));
-    //         if (fees > availableLiquidity) {
-    //             fees = availableLiquidity;
-    //         }
-    //         pool.withdraw(address(dai), fees, address(this));
-    //         daiJoin.join(address(chainlog.getAddress("MCD_VOW")), fees);
-    //     }
-    // }
+    function reap() external {
+        require(vat.live() == 1, "DssDirectDepositAaveDai/no-reap-during-shutdown");
+        require(live == 1,       "DssDirectDepositAaveDai/no-reap-during-cage");
+
+        uint256 preBalance = dai.balanceOf(address(this));
+
+        pool.withdrawFunds();
+        daiJoin.join(address(chainlog.getAddress("MCD_VOW")), dai.balanceOf(address(this)) - preBalance);
+    }
 
     // function collect(address[] memory assets, uint256 amount) external returns (uint256) {
     //     require(king != address(0), "DssDirectDepositAaveDai/king-not-set");

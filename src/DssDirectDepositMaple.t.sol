@@ -6,9 +6,10 @@ import { ChainlogAbstract, VatAbstract, EndAbstract, DaiJoinAbstract, SpotAbstra
 import { DSTest }  from "../lib/ds-test/src/test.sol";
 import { DSValue } from "../lib/ds-value/src/value.sol";
 
+import { Borrower }     from "./accounts/Borrower.sol";
 import { PoolDelegate } from "./accounts/PoolDelegate.sol";
 
-import { BPoolLike, BPoolFactoryLike, ERC20Like, Hevm, MapleGlobalsLike, PoolLike } from "./interfaces/Interfaces.sol";
+import { BPoolLike, BPoolFactoryLike, ERC20Like, Hevm, LoanLike, MapleGlobalsLike, PoolLike } from "./interfaces/Interfaces.sol";
 
 import { AddressRegistry }       from "./AddressRegistry.sol";
 import { DirectDepositMom }      from "./DirectDepositMom.sol";
@@ -23,6 +24,8 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
     uint256 constant WAD = 10 ** 18;
     uint256 constant RAY = 10 ** 27;
     uint256 constant RAD = 10 ** 45;
+
+    address[3] calcs;
 
     ChainlogAbstract constant chainlog = ChainlogAbstract(CHAINLOG);
     VatAbstract      constant vat      = VatAbstract(VAT);
@@ -40,8 +43,14 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
     DirectDepositMom      directDepositMom;
     DSValue               pip;
 
+    uint256 start;
+
     function setUp() public {
         hevm = Hevm(address(bytes20(uint160(uint256(keccak256('hevm cheat code'))))));
+
+        start = block.timestamp;
+
+        calcs = [REPAYMENT_CALC, LATEFEE_CALC, PREMIUM_CALC];
 
         _setUpMapleDaiPool();
 
@@ -72,11 +81,123 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         poolDelegate.setAllowList(address(pool), address(deposit), true);
     }
 
+    function test_basic_deposit() external { 
+        uint256 daiTotalSupply = dai.totalSupply();
+
+        assertEq(dai.balanceOf(address(pool.liquidityLocker())), 0);
+        assertEq(pool.balanceOf(address(deposit)),               0);
+
+        deposit.exec();
+
+        assertEq(dai.totalSupply(), daiTotalSupply + 5_000_000 * WAD);
+
+        assertEq(dai.balanceOf(address(pool.liquidityLocker())), 5_000_000 * WAD);
+        assertEq(pool.balanceOf(address(deposit)),               5_000_000 * WAD);
+    }
+
+    function test_claim_interest() external { 
+        deposit.exec();
+
+        /********************/
+        /*** Set up Loans ***/
+        /********************/
+
+        Borrower borrower1 = new Borrower();
+        Borrower borrower2 = new Borrower();
+
+        // Loan 1: 10% APR, 180 day term, 30 day payment interval, 1m USD, 20% collateralized with WBTC
+        uint256[5] memory specs = [1000, 180, 30, uint256(1_000_000 * WAD), 2000];
+        LoanLike loan1 = LoanLike(borrower1.createLoan(LOAN_FACTORY, DAI, WBTC, FL_FACTORY, CL_FACTORY, specs, calcs));
+
+        // Loan 1: 10% APR, 180 day term, 30 day payment interval, 4m USD, 0% collateralized
+        specs = [1000, 180, 30, uint256(4_000_000 * WAD), 0];
+        LoanLike loan2 = LoanLike(borrower2.createLoan(LOAN_FACTORY, DAI, WBTC, FL_FACTORY, CL_FACTORY, specs, calcs));
+
+        /******************/
+        /*** Fund Loans ***/
+        /******************/
+
+        poolDelegate.fundLoan(address(pool), address(loan1), DL_FACTORY,  1_000_000 * WAD);
+        uint256 collateralRequired1 = loan1.collateralRequiredForDrawdown(1_000_000 * WAD);
+
+        poolDelegate.fundLoan(address(pool), address(loan2), DL_FACTORY,  4_000_000 * WAD);
+        uint256 collateralRequired2 = loan2.collateralRequiredForDrawdown(4_000_000 * WAD);
+
+        /**********************/
+        /*** Drawdown Loans ***/
+        /**********************/
+
+        _mintTokens(WBTC, address(borrower1), collateralRequired1);
+        borrower1.approve(WBTC, address(loan1), collateralRequired1);
+        borrower1.drawdown(address(loan1), 1_000_000 * WAD);
+
+        // Zero collateral
+        borrower2.drawdown(address(loan2), 4_000_000 * WAD);
+
+        /*********************/
+        /*** Make Payments ***/
+        /*********************/
+
+        hevm.warp(start + 30 days);
+
+        ( uint256 paymentAmount1, , ) = loan1.getNextPayment();
+        _mintTokens(DAI, address(borrower1), paymentAmount1);
+        borrower1.approve(DAI, address(loan1), paymentAmount1);
+        borrower1.makePayment(address(loan1));
+
+        ( uint256 paymentAmount2, , ) = loan2.getNextPayment();
+        _mintTokens(DAI, address(borrower2), paymentAmount2);
+        borrower2.approve(DAI, address(loan2), paymentAmount2);
+        borrower2.makePayment(address(loan2));
+
+        /********************************/
+        /*** Claim Interest into Pool ***/
+        /********************************/
+
+        assertEq(dai.balanceOf(pool.liquidityLocker()),      0);  // Cash balance of pool
+        assertEq(pool.withdrawableFundsOf(address(deposit)), 0);  // Claimable interest of D3M
+
+        poolDelegate.claim(address(pool), address(loan1), DL_FACTORY);
+        poolDelegate.claim(address(pool), address(loan2), DL_FACTORY);
+
+        uint256 pool_claimedInterest = (paymentAmount1 + paymentAmount2) * 80 / 100;  // 80% net interest
+        uint256 d3m_claimedInterest  = pool_claimedInterest - 1;                      // Rounding
+
+        assertEq(pool_claimedInterest, 32_876_712328767123287670);
+        assertEq(d3m_claimedInterest,  32_876_712328767123287669);
+
+        assertEq(dai.balanceOf(pool.liquidityLocker()),      pool_claimedInterest); // Cash balance of pool
+        assertEq(pool.withdrawableFundsOf(address(deposit)), d3m_claimedInterest);  // Claimable interest of D3M (rounding)
+
+        /*******************************/
+        /*** Claim Interest into Vow ***/
+        /*******************************/
+
+        uint256 dai_totalSupply = dai.totalSupply();
+        uint256 vat_dai_vow     = vat.dai(VOW);
+
+        assertEq(dai_totalSupply, 8_917_709_696_588987632222332732);
+        assertEq(vat_dai_vow,     234_393_574_218836631387411018108387992280731891223013718);
+
+        deposit.reap();
+
+        assertEq(dai.balanceOf(pool.liquidityLocker()),      1);  // Cash balance of pool (dust)
+        assertEq(pool.withdrawableFundsOf(address(deposit)), 0);  // Claimable interest of D3M
+
+        assertEq(dai.totalSupply(), dai_totalSupply - d3m_claimedInterest);
+        assertEq(vat.dai(VOW),      vat_dai_vow     + d3m_claimedInterest * RAY);  // Convert to RAD
+    }
+
+    /************************/
+    /*** Helper Functions ***/
+    /************************/
+
     function _mintTokens(address token, address account, uint256 amount) internal {
         uint256 slot;
 
-        if      (token == DAI) slot = 2;
-        else if (token == MPL) slot = 0;
+        if      (token == DAI)  slot = 2;
+        else if (token == MPL)  slot = 0;
+        else if (token == WBTC) slot = 0;
 
         hevm.store(
             token,
@@ -135,26 +256,12 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         /*******************************************************/
 
         // Create a DAI pool with a 5m liquidity cap
-        pool = PoolLike(poolDelegate.createPool(POOL_FACTORY, DAI, address(bPool), SL_FACTORY, LL_FACTORY, 500, 100, 5_000_000 ether));
+        pool = PoolLike(poolDelegate.createPool(POOL_FACTORY, DAI, address(bPool), SL_FACTORY, LL_FACTORY, 1000, 1000, 5_000_000 ether));
 
         // Stake BPT for insurance and finalize pool
         poolDelegate.approve(address(bPool), pool.stakeLocker(), type(uint256).max);
         poolDelegate.stake(pool.stakeLocker(), bPool.balanceOf(address(poolDelegate)));
         poolDelegate.finalize(address(pool));
-    }
-
-    function test_basic_deposit() external { 
-        uint256 daiTotalSupply = dai.totalSupply();
-
-        assertEq(dai.balanceOf(address(pool.liquidityLocker())), 0);
-        assertEq(pool.balanceOf(address(deposit)),               0);
-
-        deposit.exec();
-
-        assertEq(dai.totalSupply(), daiTotalSupply + 5_000_000 * WAD);
-
-        assertEq(dai.balanceOf(address(pool.liquidityLocker())), 5_000_000 * WAD);
-        assertEq(pool.balanceOf(address(deposit)),               5_000_000 * WAD);
     }
 }
 

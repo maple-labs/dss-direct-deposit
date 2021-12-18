@@ -10,6 +10,7 @@ contract AddressRegistry {
     address constant DAI  = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     address constant MPL  = 0x33349B282065b0284d756F0577FB39c158F935e6;
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
 
     address constant BPOOL_FACTORY      = 0x9424B1412450D0f8Fc2255FAf6046b98213B76Bd;
     address constant USDC_BALANCER_POOL = 0xc1b10e536CD611aCFf7a7c32A9E29cE6A02Ef6ef;
@@ -18,14 +19,19 @@ contract AddressRegistry {
     /*** Maple Contracts ***/
     /***********************/
 
-    address constant GOVERNOR      = 0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196;
-    address constant MAPLE_GLOBALS = 0xC234c62c8C09687DFf0d9047e40042cd166F3600;
-    address constant POOL_FACTORY  = 0x2Cd79F7f8b38B9c0D80EA6B230441841A31537eC;
-    address constant LOAN_FACTORY  = 0x908cC851Bc757248514E060aD8Bd0a03908308ee;
-    address constant DL_FACTORY    = 0x2a7705594899Db6c3924A872676E54f041d1f9D8;
-    address constant LL_FACTORY    = 0x966528BB1C44f96b3AA8Fbf411ee896116b068C9;
-    address constant SL_FACTORY    = 0x53a597A4730Eb02095dD798B203Dcc306348B8d6;
-    address constant USD_ORACLE    = 0x5DC5E14be1280E747cD036c089C96744EBF064E7;
+    address constant GOVERNOR       = 0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196;
+    address constant MAPLE_GLOBALS  = 0xC234c62c8C09687DFf0d9047e40042cd166F3600;
+    address constant POOL_FACTORY   = 0x2Cd79F7f8b38B9c0D80EA6B230441841A31537eC;
+    address constant LOAN_FACTORY   = 0x908cC851Bc757248514E060aD8Bd0a03908308ee;
+    address constant CL_FACTORY     = 0xEE3e59D381968f4F9C92460D9d5Cfcf5d3A67987;
+    address constant DL_FACTORY     = 0x2a7705594899Db6c3924A872676E54f041d1f9D8;
+    address constant FL_FACTORY     = 0x0eB96A53EC793a244876b018073f33B23000F25b;
+    address constant SL_FACTORY     = 0x53a597A4730Eb02095dD798B203Dcc306348B8d6;
+    address constant LL_FACTORY     = 0x966528BB1C44f96b3AA8Fbf411ee896116b068C9;
+    address constant REPAYMENT_CALC = 0x7d622bB6Ed13a599ec96366Fa95f2452c64ce602;
+    address constant LATEFEE_CALC   = 0x8dC5aa328142aa8a008c25F66a77eaA8E4B46f3c;
+    address constant PREMIUM_CALC   = 0xe88Ab4Cf1Ec06840d16feD69c964aD9DAFf5c6c2;
+    address constant USD_ORACLE     = 0x5DC5E14be1280E747cD036c089C96744EBF064E7;
 
     /***********************/
     /*** Maker Contracts ***/
