@@ -66,6 +66,7 @@ interface PoolFactoryLike {
 
 interface PoolLike is TokenLike {
     function deposit(uint256 amount) external;
+    function intendToWithdraw() external;
     function liquidityCap() external view returns (uint256);
     function liquidityLocker() external view returns (address);
     function principalOut() external view returns (uint256);
@@ -207,24 +208,33 @@ contract DssDirectDepositMaple {
     /*** Position Management Functions ***/
     /*************************************/
 
+    event Debug(string, uint);
+    event Debug(string);
+
     function _wind(uint256 amount) internal {
         // IMPORTANT: This function assumes Vat rate of this ilk will always be == 1 * RAY (no fees).
         // That's why this module converts normalized debt (art) to Vat DAI generated with a simple RAY multiplication or division
         // This module will have an unintended behaviour if rate is changed to some other value.
 
+        emit Debug("sii");
+
         // Wind amount is limited by the debt ceiling
         (uint256 Art,,, uint256 line,) = vat.ilks(ilk);
+        emit Debug("sii");
 
         uint256 lineWad = line / RAY; // Round down to always be under the actual limit
+        emit Debug("sii");
         
         if (Art + amount > lineWad) {
             amount = lineWad - Art;
         }
+        emit Debug("sii");
 
         if (amount == 0) {
             emit Wind(0);
             return;
         }
+        emit Debug("sii");
 
         require(int256(amount) >= 0, "DssDirectDepositMaple/overflow");
 
@@ -284,11 +294,9 @@ contract DssDirectDepositMaple {
                             daiDebt
                         );
 
-        // Determine the amount of fees to bring back
         // TODO: Factor in losses
-        uint256 fees = pool.withdrawableFundsOf(address(this));
 
-        if (amount == 0 && fees == 0) {
+        if (amount == 0) {
             emit Unwind(0);
             return;
         }
@@ -296,42 +304,47 @@ contract DssDirectDepositMaple {
         require(amount <= 2 ** 255, "DssDirectDepositMaple/overflow");
 
         // To save gas you can bring the fees back with the unwind
-        uint256 total = amount + fees;
 
         uint256 prevBalance = dai.balanceOf(address(this));
         pool.withdraw(amount);
 
-        // TODO: Factory in losses
-        require(dai.balanceOf(address(this)) - prevBalance == total, "DssDirectDepositMaple/incorrect-withdrawal");
+        // TODO: Factor in losses
+        require(dai.balanceOf(address(this)) - prevBalance == amount, "DssDirectDepositMaple/incorrect-withdrawal");
 
-        daiJoin.join(address(this), total);
+        daiJoin.join(address(this), amount);
 
         address vow = chainlog.getAddress("MCD_VOW");
 
         if (mode == Mode.NORMAL) {
             vat.frob(ilk, address(this), address(this), address(this), -int256(amount), -int256(amount));
             vat.slip(ilk, address(this), -int256(amount));
-            vat.move(address(this), vow, fees * RAY);
         } else if (mode == Mode.MODULE_CULLED) {
             vat.slip(ilk, address(this), -int256(amount));
-            vat.move(address(this), vow, total * RAY);
+            vat.move(address(this), vow, amount * RAY);
         } else {
             // This can be done with the assumption that the price of 1 aDai equals 1 DAI.
             // That way we know that the prev End.skim call kept its gap[ilk] emptied as the CDP was always collateralized.
             // Otherwise we couldn't just simply take away the collateral from the End module as the next line will be doing.
             vat.slip(ilk, end, -int256(amount));
-            vat.move(address(this), vow, total * RAY);
+            vat.move(address(this), vow, amount * RAY);
         }
 
         emit Unwind(amount);
     }
 
     function exec() external {
+        // Clear out all interest
+        if (pool.withdrawableFundsOf(address(this)) > 0) reap();
+
         uint256 availableLiquidity = dai.balanceOf(pool.liquidityLocker());  // Cash balance of pool
 
         ( uint256 lpCooldownPeriod, uint256 lpWithdrawWindow ) = MapleGlobalsLike(PoolFactoryLike(pool.superFactory()).globals()).getLpCooldownParams();
 
-        bool canWithdraw = (block.timestamp - (pool.withdrawCooldown(address(this)) + lpCooldownPeriod)) <= lpWithdrawWindow;
+        bool canWithdraw; 
+        unchecked {
+            // Intentionally overflows if user is not past their cooldown yet
+            canWithdraw = (block.timestamp - (pool.withdrawCooldown(address(this)) + lpCooldownPeriod)) <= lpWithdrawWindow;
+        }
 
         // If MCD caged, withdraw max amount under MCD_CAGED enum
         if (vat.live() == 0 && canWithdraw) {
@@ -364,7 +377,10 @@ contract DssDirectDepositMaple {
                 );
             }
 
-            uint256 availablePoolCapacity = pool.liquidityCap() - pool.principalOut() - dai.balanceOf(pool.liquidityLocker());
+            uint256 poolValue    = pool.principalOut() + dai.balanceOf(pool.liquidityLocker());
+            uint256 liquidityCap = pool.liquidityCap();
+
+            uint256 availablePoolCapacity = poolValue >= liquidityCap ? 0 : liquidityCap - poolValue;
 
             if (availablePoolCapacity > 0) {
                 _wind(availablePoolCapacity);
@@ -372,11 +388,16 @@ contract DssDirectDepositMaple {
         }
     }
 
+    // TODO: Figure out name
+    function triggerCooldown() external auth {
+        pool.intendToWithdraw();
+    }
+
     /********************************/
     /*** Interest Claim Functions ***/
     /********************************/
 
-    function reap() external {
+    function reap() public {
         require(vat.live() == 1, "DssDirectDepositMaple/no-reap-during-shutdown");
         require(live == 1,       "DssDirectDepositMaple/no-reap-during-cage");
 

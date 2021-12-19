@@ -84,10 +84,34 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
     function test_basic_deposit() external { 
         uint256 daiTotalSupply = dai.totalSupply();
 
+        ( uint256 ink, uint256 art ) = vat.urns(ilk, address(deposit));
+        ( uint256 Art,,,, )          = vat.ilks(ilk);
+
+        uint256 gem    = vat.gem(ilk, address(deposit));
+        uint256 vatDai = vat.dai(address(deposit));
+
+        assertEq(ink,    0);
+        assertEq(art,    0);
+        assertEq(Art,    0);
+        assertEq(gem,    0);
+        assertEq(vatDai, 0);
+
         assertEq(dai.balanceOf(address(pool.liquidityLocker())), 0);
         assertEq(pool.balanceOf(address(deposit)),               0);
 
         deposit.exec();
+
+        ( ink, art ) = vat.urns(ilk, address(deposit));
+        ( Art,,,, )  = vat.ilks(ilk);
+
+        gem    = vat.gem(ilk, address(deposit));
+        vatDai = vat.dai(address(deposit));
+
+        assertEq(ink,    5_000_000 * WAD);
+        assertEq(art,    5_000_000 * WAD);
+        assertEq(Art,    5_000_000 * WAD);
+        assertEq(gem,    0);  // TODO: Follow up on why gem doesn't change
+        assertEq(vatDai, 0);
 
         assertEq(dai.totalSupply(), daiTotalSupply + 5_000_000 * WAD);
 
@@ -96,6 +120,11 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
     }
 
     function test_claim_interest() external { 
+
+        /********************/
+        /*** D3M Deposits ***/
+        /********************/
+
         deposit.exec();
 
         /********************/
@@ -186,6 +215,165 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
 
         assertEq(dai.totalSupply(), dai_totalSupply - d3m_claimedInterest);
         assertEq(vat.dai(VOW),      vat_dai_vow     + d3m_claimedInterest * RAY);  // Convert to RAD
+    }
+
+    function test_withdraw_full_liquidity() external {
+
+        /********************/
+        /*** D3M Deposits ***/
+        /********************/
+
+        deposit.exec();
+
+        /********************/
+        /*** Set up Loans ***/
+        /********************/
+
+        Borrower borrower1 = new Borrower();
+        Borrower borrower2 = new Borrower();
+
+        // Loan 1: 10% APR, 180 day term, 30 day payment interval, 1m USD, 20% collateralized with WBTC
+        uint256[5] memory specs = [1000, 180, 30, uint256(1_000_000 * WAD), 2000];
+        LoanLike loan1 = LoanLike(borrower1.createLoan(LOAN_FACTORY, DAI, WBTC, FL_FACTORY, CL_FACTORY, specs, calcs));
+
+        // Loan 1: 10% APR, 180 day term, 30 day payment interval, 4m USD, 0% collateralized
+        specs = [1000, 180, 30, uint256(4_000_000 * WAD), 0];
+        LoanLike loan2 = LoanLike(borrower2.createLoan(LOAN_FACTORY, DAI, WBTC, FL_FACTORY, CL_FACTORY, specs, calcs));
+
+        /******************/
+        /*** Fund Loans ***/
+        /******************/
+
+        poolDelegate.fundLoan(address(pool), address(loan1), DL_FACTORY,  1_000_000 * WAD);
+        uint256 collateralRequired1 = loan1.collateralRequiredForDrawdown(1_000_000 * WAD);
+
+        poolDelegate.fundLoan(address(pool), address(loan2), DL_FACTORY,  4_000_000 * WAD);
+        uint256 collateralRequired2 = loan2.collateralRequiredForDrawdown(4_000_000 * WAD);
+
+        /**********************/
+        /*** Drawdown Loans ***/
+        /**********************/
+
+        _mintTokens(WBTC, address(borrower1), collateralRequired1);
+        borrower1.approve(WBTC, address(loan1), collateralRequired1);
+        borrower1.drawdown(address(loan1), 1_000_000 * WAD);
+
+        // Zero collateral
+        borrower2.drawdown(address(loan2), 4_000_000 * WAD);
+
+        /*************************/
+        /*** Make All Payments ***/
+        /*************************/
+
+        for(uint256 i; i < 6; ++i) {
+            hevm.warp(loan1.nextPaymentDue());
+
+            ( uint256 paymentAmount1, , ) = loan1.getNextPayment();
+            _mintTokens(DAI, address(borrower1), paymentAmount1);
+            borrower1.approve(DAI, address(loan1), paymentAmount1);
+            borrower1.makePayment(address(loan1));
+
+            ( uint256 paymentAmount2, , ) = loan2.getNextPayment();
+            _mintTokens(DAI, address(borrower2), paymentAmount2);
+            borrower2.approve(DAI, address(loan2), paymentAmount2);
+            borrower2.makePayment(address(loan2));
+        }
+
+        /********************************************/
+        /*** Claim Principal + Interest into Pool ***/
+        /********************************************/
+
+        assertEq(dai.balanceOf(pool.liquidityLocker()),      0);  // Cash balance of pool
+        assertEq(pool.withdrawableFundsOf(address(deposit)), 0);  // Claimable interest of D3M
+
+        poolDelegate.claim(address(pool), address(loan1), DL_FACTORY);
+        poolDelegate.claim(address(pool), address(loan2), DL_FACTORY);
+
+        uint256 claimedInterest = 197_260_273972602739726021;
+
+        assertEq(dai.balanceOf(pool.liquidityLocker()),      5_000_000 * WAD + claimedInterest - 1);  // Cash balance of pool (rounding error)
+        assertEq(pool.withdrawableFundsOf(address(deposit)), claimedInterest);                        // Claimable interest of D3M (8% APY)
+
+        /*************************************************************************************/
+        /*** Call `exec()` without triggering cooldown (no change except claimed interest) ***/
+        /*************************************************************************************/
+
+        uint256 pre_daiTotalSupply = dai.totalSupply();
+        uint256 pre_vat_dai_vow    = vat.dai(VOW);
+
+        ( uint256 pre_ink, uint256 pre_art ) = vat.urns(ilk, address(deposit));
+        ( uint256 pre_Art,,,, )          = vat.ilks(ilk);
+
+        uint256 pre_gem    = vat.gem(ilk, address(deposit));
+        uint256 pre_vatDai = vat.dai(address(deposit));
+
+        deposit.exec();
+
+        uint256 post_daiTotalSupply = dai.totalSupply();
+        uint256 post_vat_dai_vow    = vat.dai(VOW);
+
+        ( uint256 post_ink, uint256 post_art ) = vat.urns(ilk, address(deposit));
+        ( uint256 post_Art,,,, )          = vat.ilks(ilk);
+
+        uint256 post_gem    = vat.gem(ilk, address(deposit));
+        uint256 post_vatDai = vat.dai(address(deposit));
+
+        assertEq(post_ink,    pre_ink);
+        assertEq(post_art,    pre_art);
+        assertEq(post_Art,    pre_Art);
+        assertEq(post_gem,    pre_gem);
+        assertEq(post_vatDai, pre_vatDai);
+
+        assertEq(post_daiTotalSupply, pre_daiTotalSupply - claimedInterest);
+        assertEq(post_vat_dai_vow,    pre_vat_dai_vow    + claimedInterest);
+
+        /******************************************************************/
+        /*** Call `exec()` after triggering cooldown (perform withdraw) ***/
+        /******************************************************************/
+
+        uint256 cooldownTimestamp = block.timestamp;
+
+        assertEq(pool.withdrawCooldown(address(deposit)), 0);
+
+        deposit.triggerCooldown();
+
+        assertEq(pool.withdrawCooldown(address(deposit)), cooldownTimestamp);
+
+        // Warp to one second before cooldown is finished
+        hevm.warp(cooldownTimestamp + 10 days - 1 seconds);
+        deposit.exec();
+        assertEq(dai.totalSupply(), pre_daiTotalSupply);  // Demonstrate withdraw was not successful
+
+        // Warp to one second after withdraw window is finished
+        hevm.warp(cooldownTimestamp + 10 days + 48 hours + 1 seconds);
+        deposit.exec();
+        assertEq(dai.totalSupply(), pre_daiTotalSupply);  // Demonstrate withdraw was not successful
+
+        pre_ink    = post_ink;
+        pre_art    = post_art;
+        pre_Art    = post_Art;
+        pre_gem    = post_gem;
+        pre_vatDai = post_vatDai;
+
+        pre_daiTotalSupply = post_daiTotalSupply;
+
+        // Warp to the moment the cooldown is over
+        hevm.warp(cooldownTimestamp + 10 days);
+        deposit.exec();
+
+        post_daiTotalSupply = dai.totalSupply();
+
+        ( post_ink, post_art ) = vat.urns(ilk, address(deposit));
+        ( post_Art,,,, )          = vat.ilks(ilk);
+
+        post_gem    = vat.gem(ilk, address(deposit));
+        post_vatDai = vat.dai(address(deposit));
+
+        assertEq(post_ink,    4_999_999_999999999999999999);  // TODO: Look into how to handle rounding issue
+        assertEq(post_art,    4_999_999_999999999999999999);
+        assertEq(post_Art,    4_999_999_999999999999999999);
+        assertEq(post_gem,    0);
+        assertEq(post_vatDai, 0);
     }
 
     /************************/

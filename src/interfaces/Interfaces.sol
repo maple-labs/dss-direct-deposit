@@ -38,6 +38,7 @@ interface LoanLike {
     function collateralRequiredForDrawdown(uint256) external view returns (uint256);
     function drawdown(uint256) external;
     function getNextPayment() external returns (uint256, uint256, uint256);
+    function nextPaymentDue() external returns (uint256);
     function makePayment() external;
 }
 
@@ -65,6 +66,7 @@ interface PoolLike {
     function setAllowList(address, bool) external;
     function superFactory() external view returns (address);
     function withdrawableFundsOf(address) external view returns (uint256);
+    function withdrawCooldown(address) external view returns (uint256);
 }
 
 interface StakeLockerLike {
