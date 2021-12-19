@@ -60,12 +60,24 @@ interface EndLike {
     function skim(bytes32, address) external;
 }
 
-interface MaplePoolLike is TokenLike {
+interface PoolFactoryLike {
+    function globals() external view returns (address);
+}
+
+interface PoolLike is TokenLike {
     function deposit(uint256 amount) external;
     function liquidityCap() external view returns (uint256);
     function liquidityLocker() external view returns (address);
     function principalOut() external view returns (uint256);
+    function superFactory() external view returns (address);
+    function withdraw(uint256) external;
+    function withdrawCooldown(address) external view returns (uint256);
     function withdrawFunds() external;
+    function withdrawableFundsOf(address) external view returns (uint256);
+}
+
+interface MapleGlobalsLike {
+    function getLpCooldownParams() external view returns (uint256, uint256);
 }
 
 contract DssDirectDepositMaple {
@@ -78,12 +90,12 @@ contract DssDirectDepositMaple {
 
     bytes32 public immutable ilk;
 
-    ChainlogLike  public immutable chainlog;
-    DaiJoinLike   public immutable daiJoin;
-    MaplePoolLike public immutable pool;
-    TokenLike     public immutable dai;
-    TokenLike     public immutable gem;
-    VatLike       public immutable vat;
+    ChainlogLike public immutable chainlog;
+    DaiJoinLike  public immutable daiJoin;
+    PoolLike     public immutable pool;
+    TokenLike    public immutable dai;
+    TokenLike    public immutable gem;
+    VatLike      public immutable vat;
 
     /***********************/
     /*** State Variables ***/
@@ -125,7 +137,7 @@ contract DssDirectDepositMaple {
         ilk      = ilk_;
         chainlog = ChainlogLike(chainlog_);
         daiJoin  = DaiJoinLike(daiJoin_);
-        pool     = MaplePoolLike(pool_);
+        pool     = PoolLike(pool_);
         gem      = TokenLike(pool_);  // TODO: Consolidate gem and pool?
         vat      = VatLike(vat_);
         
@@ -183,6 +195,14 @@ contract DssDirectDepositMaple {
         emit File(what, data);
     }
 
+    /**********************/
+    /*** Math Functions ***/
+    /**********************/
+
+    function _min(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        z = x <= y ? x : y;
+    }
+
     /*************************************/
     /*** Position Management Functions ***/
     /*************************************/
@@ -222,126 +242,133 @@ contract DssDirectDepositMaple {
         emit Wind(amount);
     }
 
-    // function _unwind(uint256 supplyReduction, uint256 availableLiquidity, Mode mode) internal {
-    //     // IMPORTANT: this function assumes Vat rate of this ilk will always be == 1 * RAY (no fees).
-    //     // That's why it converts normalized debt (art) to Vat DAI generated with a simple RAY multiplication or division
-    //     // This module will have an unintended behaviour if rate is changed to some other value.
+    // Cannot be done atomically since there is a 10 day cooldown period in Maple pools.
+    function _unwind(uint256 supplyReduction, uint256 availableLiquidity, Mode mode) internal {
+        // IMPORTANT: This function assumes Vat rate of this ilk will always be == 1 * RAY (no fees).
+        // That's why it converts normalized debt (art) to Vat DAI generated with a simple RAY multiplication or division
+        // This module will have an unintended behaviour if rate is changed to some other value.
 
-    //     address end;
-    //     uint256 adaiBalance = adai.balanceOf(address(this));
-    //     uint256 daiDebt;
-    //     if (mode == Mode.NORMAL) {
-    //         // Normal mode or module just caged (no culled)
-    //         // debt is obtained from CDP art
-    //         (,daiDebt) = vat.urns(ilk, address(this));
-    //     } else if (mode == Mode.MODULE_CULLED) {
-    //         // Module shutdown and culled
-    //         // debt is obtained from free collateral owned by this contract
-    //         daiDebt = vat.gem(ilk, address(this));
-    //     } else {
-    //         // MCD caged
-    //         // debt is obtained from free collateral owned by the End module
-    //         end = chainlog.getAddress("MCD_END");
-    //         EndLike(end).skim(ilk, address(this));
-    //         daiDebt = vat.gem(ilk, address(end));
-    //     }
+        address end;
+        uint256 poolBalance = pool.balanceOf(address(this));
+        uint256 daiDebt;
+        
+        if (mode == Mode.NORMAL) {
+            // Normal mode or module just caged (no culled)
+            // debt is obtained from CDP art
+            ( , daiDebt ) = vat.urns(ilk, address(this));
+        } else if (mode == Mode.MODULE_CULLED) {
+            // Module shutdown and culled
+            // debt is obtained from free collateral owned by this contract
+            daiDebt = vat.gem(ilk, address(this));
+        } else {
+            // MCD caged
+            // debt is obtained from free collateral owned by the End module
+            end = chainlog.getAddress("MCD_END");
+            EndLike(end).skim(ilk, address(this));
+            daiDebt = vat.gem(ilk, address(end));
+        }
 
-    //     // Unwind amount is limited by how much:
-    //     // - max reduction desired
-    //     // - liquidity available
-    //     // - adai we have to withdraw
-    //     // - dai debt tracked in vat (CDP or free)
-    //     uint256 amount = _min(
-    //                         _min(
-    //                             _min(
-    //                                 supplyReduction,
-    //                                 availableLiquidity
-    //                             ),
-    //                             adaiBalance
-    //                         ),
-    //                         daiDebt
-    //                     );
+        // Unwind amount is limited by how much:
+        // - Max reduction desired
+        // - Liquidity available
+        // - MPT we have to withdraw
+        // - DAI debt tracked in vat (CDP or free)
+        uint256 amount = _min(
+                            _min(
+                                _min(
+                                    supplyReduction,
+                                    availableLiquidity
+                                ),
+                                poolBalance
+                            ),
+                            daiDebt
+                        );
 
-    //     // Determine the amount of fees to bring back
-    //     uint256 fees = 0;
-    //     if (adaiBalance > daiDebt) {
-    //         fees = adaiBalance - daiDebt;
+        // Determine the amount of fees to bring back
+        // TODO: Factor in losses
+        uint256 fees = pool.withdrawableFundsOf(address(this));
 
-    //         if (_add(amount, fees) > availableLiquidity) {
-    //             // Don't need safe-math because this is constrained above
-    //             fees = availableLiquidity - amount;
-    //         }
-    //     }
+        if (amount == 0 && fees == 0) {
+            emit Unwind(0);
+            return;
+        }
 
-    //     if (amount == 0 && fees == 0) {
-    //         emit Unwind(0);
-    //         return;
-    //     }
+        require(amount <= 2 ** 255, "DssDirectDepositMaple/overflow");
 
-    //     require(amount <= 2 ** 255, "DssDirectDepositMaple/overflow");
+        // To save gas you can bring the fees back with the unwind
+        uint256 total = amount + fees;
 
-    //     // To save gas you can bring the fees back with the unwind
-    //     uint256 total = _add(amount, fees);
-    //     pool.withdraw(address(dai), total, address(this));
-    //     daiJoin.join(address(this), total);
+        uint256 prevBalance = dai.balanceOf(address(this));
+        pool.withdraw(amount);
 
-    //     // normalized debt == erc20 DAI to join (Vat rate for this ilk fixed to 1 RAY)
+        // TODO: Factory in losses
+        require(dai.balanceOf(address(this)) - prevBalance == total, "DssDirectDepositMaple/incorrect-withdrawal");
 
-    //     address vow = chainlog.getAddress("MCD_VOW");
-    //     if (mode == Mode.NORMAL) {
-    //         vat.frob(ilk, address(this), address(this), address(this), -int256(amount), -int256(amount));
-    //         vat.slip(ilk, address(this), -int256(amount));
-    //         vat.move(address(this), vow, _mul(fees, RAY));
-    //     } else if (mode == Mode.MODULE_CULLED) {
-    //         vat.slip(ilk, address(this), -int256(amount));
-    //         vat.move(address(this), vow, _mul(total, RAY));
-    //     } else {
-    //         // This can be done with the assumption that the price of 1 aDai equals 1 DAI.
-    //         // That way we know that the prev End.skim call kept its gap[ilk] emptied as the CDP was always collateralized.
-    //         // Otherwise we couldn't just simply take away the collateral from the End module as the next line will be doing.
-    //         vat.slip(ilk, end, -int256(amount));
-    //         vat.move(address(this), vow, _mul(total, RAY));
-    //     }
+        daiJoin.join(address(this), total);
 
-    //     emit Unwind(amount);
-    // }
+        address vow = chainlog.getAddress("MCD_VOW");
+
+        if (mode == Mode.NORMAL) {
+            vat.frob(ilk, address(this), address(this), address(this), -int256(amount), -int256(amount));
+            vat.slip(ilk, address(this), -int256(amount));
+            vat.move(address(this), vow, fees * RAY);
+        } else if (mode == Mode.MODULE_CULLED) {
+            vat.slip(ilk, address(this), -int256(amount));
+            vat.move(address(this), vow, total * RAY);
+        } else {
+            // This can be done with the assumption that the price of 1 aDai equals 1 DAI.
+            // That way we know that the prev End.skim call kept its gap[ilk] emptied as the CDP was always collateralized.
+            // Otherwise we couldn't just simply take away the collateral from the End module as the next line will be doing.
+            vat.slip(ilk, end, -int256(amount));
+            vat.move(address(this), vow, total * RAY);
+        }
+
+        emit Unwind(amount);
+    }
 
     function exec() external {
-        // uint256 availableLiquidity = dai.balanceOf(address(adai));
+        uint256 availableLiquidity = dai.balanceOf(pool.liquidityLocker());  // Cash balance of pool
 
-        if (vat.live() == 0) {
-            // // MCD caged
-            // require(EndLike(chainlog.getAddress("MCD_END")).debt() == 0, "DssDirectDepositMaple/end-debt-already-set");
-            // require(culled == 0, "DssDirectDepositMaple/module-has-to-be-unculled-first");
-            // _unwind(
-            //     type(uint256).max,
-            //     availableLiquidity,
-            //     Mode.MCD_CAGED
-            // );
-        } else if (live == 0) {
-            // // This module caged
-            // _unwind(
-            //     type(uint256).max,
-            //     availableLiquidity,
-            //     culled == 1
-            //     ? Mode.MODULE_CULLED
-            //     : Mode.NORMAL
-            // );
-        } else {
-            // Normal path
+        ( uint256 lpCooldownPeriod, uint256 lpWithdrawWindow ) = MapleGlobalsLike(PoolFactoryLike(pool.superFactory()).globals()).getLpCooldownParams();
 
-            uint256 availableCapacity = pool.liquidityCap() - pool.principalOut() - dai.balanceOf(pool.liquidityLocker());
+        bool canWithdraw = (block.timestamp - (pool.withdrawCooldown(address(this)) + lpCooldownPeriod)) <= lpWithdrawWindow;
 
-            if (availableCapacity > 0) {
-                _wind(availableCapacity - pool.balanceOf(address(this)));
-            } 
-            // else if (targetSupply < supplyAmount) {
-            //     _unwind(
-            //         supplyAmount - targetSupply,
-            //         availableLiquidity,
-            //         Mode.NORMAL
-            //     );
-            // }
+        // If MCD caged, withdraw max amount under MCD_CAGED enum
+        if (vat.live() == 0 && canWithdraw) {
+            require(EndLike(chainlog.getAddress("MCD_END")).debt() == 0, "DssDirectDepositMaple/end-debt-already-set");
+            require(culled == 0, "DssDirectDepositMaple/module-has-to-be-unculled-first");
+            _unwind(
+                type(uint256).max,
+                availableLiquidity,
+                Mode.MCD_CAGED
+            );
+        } 
+        // If D3M caged, withdraw max amount under MODULE_CULLED or NORMAL enum
+        else if (live == 0 && canWithdraw) {
+            _unwind(
+                type(uint256).max,
+                availableLiquidity,
+                culled == 1
+                    ? Mode.MODULE_CULLED
+                    : Mode.NORMAL
+            );
+        } 
+        // Else do a withdraw of available liquidity if in withdraw window, or deposit to fill debt ceiling
+        else {
+            // If D3M is in withdrawal window, trigger _unwind flow
+            if (canWithdraw) {
+                _unwind(
+                    availableLiquidity,  // TODO: Figure out supplyReduction param
+                    availableLiquidity,
+                    Mode.NORMAL
+                );
+            }
+
+            uint256 availablePoolCapacity = pool.liquidityCap() - pool.principalOut() - dai.balanceOf(pool.liquidityLocker());
+
+            if (availablePoolCapacity > 0) {
+                _wind(availablePoolCapacity);
+            }
         }
     }
 
@@ -374,7 +401,7 @@ contract DssDirectDepositMaple {
     function cage() external auth {
         require(vat.live() == 1, "DssDirectDepositMaple/no-cage-during-shutdown");
         live = 0;
-        tic = block.timestamp;
+        tic  = block.timestamp;
         emit Cage();
     }
 

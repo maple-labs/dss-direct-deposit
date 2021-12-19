@@ -63,6 +63,7 @@ interface PoolLike {
     function liquidityLocker() external view returns (address);
     function stakeLocker() external returns (address);
     function setAllowList(address, bool) external;
+    function superFactory() external view returns (address);
     function withdrawableFundsOf(address) external view returns (uint256);
 }
 
