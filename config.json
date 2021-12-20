@@ -1,0 +1,32 @@
+{
+    "language": "Solidity",
+    "sources": {
+        "src/DssDirectDepositMaple.sol": {
+            "urls": ["src/DssDirectDepositMaple.sol"]
+        },
+        "src/DssDirectDepositMaple.t.sol": {
+            "urls": ["src/DssDirectDepositMaple.t.sol"]
+        }
+    },
+    "settings": {
+        "optimizer": {
+            "enabled": false,
+            "runs": 200
+        },
+        "outputSelection": {
+            "*": {
+                "*": [
+                    "abi",
+                    "evm.bytecode",
+                    "evm.deployedBytecode"
+                ],
+                "": [
+                    "ast"
+                ]
+            }
+        },
+        "metadata": {
+            "bytecodeHash": "none"
+        }
+    }
+}
