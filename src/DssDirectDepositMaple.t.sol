@@ -167,8 +167,8 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         uint256 dai_totalSupply = dai.totalSupply();
         uint256 vat_dai_vow     = vat.dai(VOW);
 
-        assertEq(dai_totalSupply, 8_917_709_696_588987632222332732);
-        assertEq(vat_dai_vow,       234_393_574_218836631387411018108387992280731891223013718);
+        assertEq(dai_totalSupply, 8_887_348_529_829234687092730274);
+        assertEq(vat_dai_vow,       234_186_467_544611637093337615587716229232346165315078542);
 
         deposit.reap();
 
