@@ -216,25 +216,19 @@ contract DssDirectDepositMaple {
         // That's why this module converts normalized debt (art) to Vat DAI generated with a simple RAY multiplication or division
         // This module will have an unintended behaviour if rate is changed to some other value.
 
-        emit Debug("sii");
-
         // Wind amount is limited by the debt ceiling
         (uint256 Art,,, uint256 line,) = vat.ilks(ilk);
-        emit Debug("sii");
 
         uint256 lineWad = line / RAY; // Round down to always be under the actual limit
-        emit Debug("sii");
         
         if (Art + amount > lineWad) {
             amount = lineWad - Art;
         }
-        emit Debug("sii");
 
         if (amount == 0) {
             emit Wind(0);
             return;
         }
-        emit Debug("sii");
 
         require(int256(amount) >= 0, "DssDirectDepositMaple/overflow");
 
