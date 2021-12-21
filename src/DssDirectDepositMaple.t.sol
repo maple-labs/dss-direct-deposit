@@ -167,8 +167,8 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         uint256 dai_totalSupply = dai.totalSupply();
         uint256 vat_dai_vow     = vat.dai(VOW);
 
-        assertEq(dai_totalSupply, 8_887_348_529_829234687092730274);
-        assertEq(vat_dai_vow,       234_186_467_544611637093337615587716229232346165315078542);
+        assertEq(dai_totalSupply, 8_917_709_696_588987632222332732);
+        assertEq(vat_dai_vow,       234_393_574_218836631387411018108387992280731891223013718);
 
         deposit.reap();
 
@@ -284,14 +284,14 @@ contract DssDirectDepositMapleTest is AddressRegistry, DSTest {
         ( post_ink, post_art ) = vat.urns(ilk, address(deposit));
         ( post_Art,,,, )       = vat.ilks(ilk);
 
-        assertEq(post_ink, 4_999_999_999999999999999999);  // TODO: Look into how to handle rounding issue
-        assertEq(post_art, 4_999_999_999999999999999999);
-        assertEq(post_Art, 4_999_999_999999999999999999);
+        assertEq(post_ink, 1);  // TODO: Investigate rounding
+        assertEq(post_art, 1);
+        assertEq(post_Art, 1);
 
         assertEq(vat.gem(ilk, address(deposit)), 0);
         assertEq(vat.dai(address(deposit)),      0);
 
-        assertEq(dai.totalSupply(), pre_daiTotalSupply - 1);  // TODO: Investigate rounding
+        assertEq(dai.totalSupply(), pre_daiTotalSupply - 5_000_000 * WAD + 1);  // TODO: Investigate rounding
         assertEq(vat.dai(VOW),      pre_vat_dai_vow);
     }
 

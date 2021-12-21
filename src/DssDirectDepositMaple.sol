@@ -208,9 +208,6 @@ contract DssDirectDepositMaple {
     /*** Position Management Functions ***/
     /*************************************/
 
-    event Debug(string, uint);
-    event Debug(string);
-
     function _wind(uint256 amount) internal {
         // IMPORTANT: This function assumes Vat rate of this ilk will always be == 1 * RAY (no fees).
         // That's why this module converts normalized debt (art) to Vat DAI generated with a simple RAY multiplication or division
@@ -369,6 +366,7 @@ contract DssDirectDepositMaple {
                     availableLiquidity,
                     Mode.NORMAL
                 );
+                return;
             }
 
             uint256 poolValue    = pool.principalOut() + dai.balanceOf(pool.liquidityLocker());
